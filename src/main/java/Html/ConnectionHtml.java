@@ -1,83 +1,94 @@
 package Html;
 
+import org.apache.commons.cli.CommandLine;
 import org.jsoup.Jsoup;
-import org.jsoup.nodes.*;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import java.io.*;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ConnectionHtml {
+public class ConnectionHtml implements Runnable {
     private String link;
 
-    private static final String FILES_DIRECTORIES = "C:\\Users\\Safet\\Desktop\\CorseProject2\\Html\\";
-
-    private static final String IMAGE_DIRECTORIES = "C:\\Users\\Safet\\Desktop\\CorseProject2\\Images\\";
+    private static String imagesDirectory = "C:\\Users\\Safet\\Desktop\\CorseProject2\\Images\\";
 
     private final List<String> externalLinks = new ArrayList<>();
 
-    public ConnectionHtml(String link) {
+    private static final List<String> checkedLinks = new ArrayList<>();
+
+    private static final List<String> downloadedPhotos = new ArrayList<>();
+
+    private final HttpClient client;
+
+    private final CommandLine cmd;
+
+    public ConnectionHtml(String link, CommandLine cmd) {
+        this.cmd = cmd;
         this.link = link;
+        this.client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS).build();
+        //imagesDirectory = cmd.getOptionValue("output_dir");
     }
 
+    @Override
     public void run() {
         try {
-            Document doc = Jsoup.connect(link).get();
-            Element element = doc.body();
+            System.out.println("Current link: " + link);
+            HttpRequest request = createConnectionRequest();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            Document doc = Jsoup.parse(response.body(), response.uri().toString());
             Elements elements = doc.getElementsByTag("img");
-            Elements externalLinks = doc.getElementsByTag("a");
-            writeHtmlToFile(element, elements);
-            getExternalLinks(element, externalLinks);
-            walkExternalLink();
+            downloadPhotosFromHtml(elements);
+
+            Elements externalLinksElement = doc.getElementsByTag("a");
+            saveExternalLinks(externalLinksElement);
+
+            checkedLinks.add(link);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public void walkExternalLink() {
-        for (String link : externalLinks) {
-            System.out.println("Currunt link: " + link);
-            try {
-                Document doc = Jsoup.connect(link).get();
-                Element element = doc.body();
-                Elements elements = doc.getElementsByTag("img");
-                writeHtmlToFile(element, elements);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
+    private HttpRequest createConnectionRequest() throws URISyntaxException {
+        HttpRequest.Builder builder = HttpRequest.newBuilder().uri(new URI(link)).GET();
+        if (cmd.hasOption("user_agent"))
+            builder.header("User-Agent", cmd.getOptionValue("user_agent"));
+
+        return builder.build();
     }
 
-    private void writeHtmlToFile(Element element, Elements elements) throws IOException {
-        StringBuilder sb = new StringBuilder();
-        sb.append(FILES_DIRECTORIES);
-        String id = element.className();
-        sb.append(id).append(".txt");
-        File file = new File(sb.toString());
-        BufferedWriter writer = new BufferedWriter(new FileWriter(file));
+    private void downloadPhotosFromHtml(Elements elements) throws IOException {
         for (Element e : elements) {
             String link = e.attr("src");
-            writer.write(link + "\n");
+            if (downloadedPhotos.contains(link))
+                continue;
             downloadPhotos(link);
+            downloadedPhotos.add(link);
         }
-        writer.close();
     }
 
-    private void getExternalLinks(Element element, Elements elements) {
+    private void saveExternalLinks(Elements elements) {
         for (Element e : elements) {
             String link = e.attr("href");
             if (link.startsWith("http"))
-                externalLinks.add(link + "\n");
+                externalLinks.add(link);
         }
-        System.out.println(externalLinks);
         System.out.println(externalLinks.size());
     }
 
     private void downloadPhotos(String link) throws MalformedURLException {
         URL url = new URL(link);
+        System.out.println(link);
         try (InputStream in = new BufferedInputStream(url.openStream());
              ByteArrayOutputStream out = new ByteArrayOutputStream();) {
             byte[] buf = new byte[1024];
@@ -86,7 +97,7 @@ public class ConnectionHtml {
             }
             byte[] response = out.toByteArray();
             String name = getName(link);
-            FileOutputStream fos = new FileOutputStream(IMAGE_DIRECTORIES + name);
+            FileOutputStream fos = new FileOutputStream(imagesDirectory + name);
             fos.write(response);
             fos.close();
         } catch (Exception e) {
@@ -101,5 +112,9 @@ public class ConnectionHtml {
         splitted = name.split("/?");
         name = splitted[0];
         return name;
+    }
+
+    public List<String> getExternalLinks() {
+        return this.externalLinks;
     }
 }
